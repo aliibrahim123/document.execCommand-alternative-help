@@ -1,0 +1,115 @@
+const $edit = {
+	unwrap(el) {
+		el.after(...el.childNodes);
+		el.remove()
+	},
+	getContainer() {
+		var selection = getSelection();
+		if (!selection.rangeCount) return;
+		var range = selection.getRangeAt(0);
+		var curNode = range.startContainer;
+		if (curNode.nodeType !== curNode.ELEMENT_NODE) curNode = curNode.parentElement;
+		while (!curNode.hasAttribute('contenteditable')) {
+			curNode = curNode.parentElement
+		}
+		return curNode
+	},
+	clean(el, tag, includeParent = true, fun) {
+		var els = [...el.getElementsByTagName(tag)];
+		if (includeParent && el.tagName === tag.toUpperCase()) els.push(el);
+		if (fun) els = els.filter(fun);
+		els.forEach(el => this.unwrap(el))
+	},
+	splitEl(el, offsetEl, offsetPar) {
+		var cloned = el.cloneNode(false), clone = false;
+		[...el.childNodes].forEach(child => (clone || (clone = child === offsetEl)) && cloned.append(child));
+		offsetPar ? offsetPar.prepend(cloned) : el.after(cloned);
+		return cloned
+	},
+	isWrappedWith(tag, fun, returnNode = false) {
+		var selection = getSelection();
+		if (!selection.rangeCount) return false;
+		var range = selection.getRangeAt(0);
+		var container = this.getContainer();
+		var curNode = range.commonAncestorContainer;
+		while (curNode !== container) {
+			if (curNode.tagName === tag.toUpperCase()) return returnNode ? curNode : fun ? fun(curNode) : true;
+			curNode = curNode.parentElement
+		}
+		return false
+	},
+	surround(el, clean = true, cleanFun) {
+		var selection = getSelection();
+		if (!selection.rangeCount) return {success: false};
+		var range = selection.getRangeAt(0);
+		el.append(...range.cloneContents().childNodes);
+		range.deleteContents();
+		if (clean) this.clean(el, el.tagName, false, cleanFun);
+		range.insertNode(el);
+		return {success: true, node: el}
+	},
+	undo(tag, fun) {
+		var selection = getSelection();
+		if (!selection.rangeCount) return {success: false};
+		var range = selection.getRangeAt(0);
+		var els = range.cloneContents();
+		range.deleteContents();
+		var applyHole = !(els.childNodes[0].tagName === tag.toUpperCase() || els.childNodes[els.childNodes.length -1].tagName === tag.toUpperCase());
+		els.childNodes.forEach(el => el.nodeType === el.ELEMENT_NODE && this.clean(el, tag, true, fun));
+		if (applyHole) {
+			var startNode = range.startContainer, topNode = this.isWrappedWith(tag, fun, true);
+			if (!topNode) {
+				range.insertNode(els);
+				return {success: true}
+			}
+			range.insertNode(new Text());
+			var curNode = startNode.nextSibling, pars = [curNode];
+			while (curNode !== topNode) {
+				curNode = curNode.parentElement;
+				pars.unshift(curNode);
+			}
+			var lastClonedNode;
+			pars.forEach((el, i) => {
+				if (i === 0) return;
+				lastClonedNode = this.splitEl(el.parentElement, el.nextSibling, lastClonedNode);
+			});
+			var lastClonedPar = pars.reduce((par, el, i) => {
+				if (i === pars.length -1) return par;
+				var cloned = el.cloneNode(false);
+				if (par === topNode) par.after(cloned);
+				else par.append(cloned);
+				return cloned
+			});
+			if (lastClonedPar === topNode) topNode.after(els);
+			else lastClonedPar.append(els);
+			range.selectNode(lastClonedPar);
+			return {success: true}
+		}
+		range.insertNode(els);
+		return {success: true}
+	},
+	cleanDom(node) {
+		if (node.nodeType === node.ELEMENT_NODE) {
+			if (node.childNodes.length === 0) node.remove();
+			if (node.tagName === node.previousSibling?.tagName) {
+				node.previousSibling.append(...node.childNodes);
+				node.remove()
+			}
+			[...node.childNodes].forEach(node => this.cleanDom(node))
+		} else {
+			if (node.textContent === '') node.remove();
+			if (node.previousSibling?.nodeType === node.TEXT_NODE) {
+				node.appendData(node.textContent);
+				node.remove()
+			}
+		}
+	},
+	toggleTag(tag, clean = true, fun) {
+		if (!getSelection().rangeCount) return {success: false};
+		if (this.isWrappedWith(tag, fun)) {
+			return this.undo(tag, fun)
+		} else {
+			return this.surround(document.createElement(tag), clean, fun)
+		}
+	}
+};
